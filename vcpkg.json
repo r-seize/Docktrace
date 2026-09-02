@@ -1,0 +1,12 @@
+{
+  "name": "docktrace",
+  "version": "0.1.0",
+  "dependencies": [
+    "cli11",
+    "nlohmann-json",
+    "fmt",
+    "spdlog",
+    "yaml-cpp",
+    "catch2"
+  ]
+}

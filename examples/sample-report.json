@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "container": {
+    "name": "api",
+    "id": "a81d2f3c4e5b6a7d8e9f0a1b2c3d4e5f6a7b8c9d",
+    "image": "registry.example.com/api:1.5",
+    "runtime": "runc",
+    "root_pid": 1842,
+    "cgroup_id": 921847,
+    "capabilities_configured": ["NET_BIND_SERVICE", "NET_RAW", "CHOWN"]
+  },
+  "observation": {
+    "started_at": "2026-08-24T20:00:00Z",
+    "duration_seconds": 60,
+    "kernel": "6.12.0",
+    "architecture": "x86_64"
+  },
+  "processes": [
+    { "path": "/usr/local/bin/api", "pid_count": 1, "exec_count": 1 },
+    { "path": "/usr/bin/curl",      "pid_count": 1, "exec_count": 2 }
+  ],
+  "files": [
+    { "path": "/etc/resolv.conf",                    "access": "READ",  "process": "/usr/local/bin/api", "count": 12 },
+    { "path": "/etc/ssl/certs/ca-certificates.crt",  "access": "READ",  "process": "/usr/local/bin/api", "count": 3  },
+    { "path": "/app/config.yaml",                    "access": "READ",  "process": "/usr/local/bin/api", "count": 1  },
+    { "path": "/tmp/cache.db",                       "access": "WRITE", "process": "/usr/local/bin/api", "count": 18 },
+    { "path": "/var/log/api.log",                    "access": "WRITE", "process": "/usr/local/bin/api", "count": 47 }
+  ],
+  "network": [
+    { "protocol": "tcp", "destination": "10.0.0.12", "port": 5432, "process": "/usr/local/bin/api", "count": 84 },
+    { "protocol": "tcp", "destination": "10.0.0.20", "port": 6379, "process": "/usr/local/bin/api", "count": 21 },
+    { "protocol": "tcp", "destination": "1.1.1.1",   "port": 443,  "process": "/usr/bin/curl",      "count": 2  }
+  ],
+  "syscalls": {
+    "read":   1260,
+    "write":  442,
+    "openat": 318,
+    "connect": 85,
+    "futex":  1940,
+    "close":  890,
+    "mmap":   231,
+    "execve": 3
+  },
+  "capabilities": {
+    "configured":   ["NET_BIND_SERVICE", "NET_RAW", "CHOWN"],
+    "observed":     ["NET_BIND_SERVICE"],
+    "not_evidenced": ["NET_RAW", "CHOWN"]
+  },
+  "warnings": [
+    "Observation may not cover error-handling paths",
+    "DNS names were not resolved"
+  ]
+}
