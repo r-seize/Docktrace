@@ -7,11 +7,19 @@ add_executable(docktrace_tests
     test_io.cpp
     test_cgroup_filter.cpp
     test_proc_collector.cpp
+    test_e2e.cpp
 )
 
 target_link_libraries(docktrace_tests PRIVATE
     docktrace_lib
     Catch2::Catch2WithMain
+)
+
+# test_e2e.cpp shells out to the real docktrace binary and the bundled
+# sample report rather than re-implementing CLI parsing logic.
+target_compile_definitions(docktrace_tests PRIVATE
+    DOCKTRACE_BIN="$<TARGET_FILE:docktrace>"
+    DOCKTRACE_EXAMPLES_DIR="${CMAKE_SOURCE_DIR}/examples"
 )
 
 include(CTest)

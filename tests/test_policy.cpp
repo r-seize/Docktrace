@@ -1,5 +1,7 @@
 #include <catch2/catch_all.hpp>
 #include <nlohmann/json.hpp>
+#include <set>
+#include <stdexcept>
 #include "docktrace/policy/policy_generator.hpp"
 
 using namespace docktrace;
@@ -99,4 +101,76 @@ TEST_CASE("Policy - OCI seccomp output is valid JSON", "[policy]") {
     auto j = nlohmann::json::parse(sec); // throws on invalid
     CHECK(j.contains("defaultAction"));
     CHECK(j.contains("syscalls"));
+}
+
+TEST_CASE("Policy - parse_strictness accepts known values and rejects others", "[policy]") {
+    CHECK(parse_strictness("conservative") == Strictness::Conservative);
+    CHECK(parse_strictness("minimal")      == Strictness::Minimal);
+    CHECK(parse_strictness("audit")        == Strictness::Audit);
+    CHECK_THROWS_AS(parse_strictness("bogus"), std::invalid_argument);
+}
+
+TEST_CASE("Policy - minimal strictness never exceeds conservative's allow-set", "[policy]") {
+    auto r = make_report();
+    auto prof = generate(r);
+
+    auto minimal_json      = nlohmann::json::parse(to_oci_seccomp(prof, r, Strictness::Minimal, true));
+    auto conservative_json = nlohmann::json::parse(to_oci_seccomp(prof, r, Strictness::Conservative, true));
+
+    auto names = [](nlohmann::json& j) {
+        std::set<std::string> s;
+        if (!j["syscalls"].empty())
+            for (auto& n : j["syscalls"][0]["names"]) s.insert(n.get<std::string>());
+        return s;
+    };
+    auto minimal_names      = names(minimal_json);
+    auto conservative_names = names(conservative_json);
+
+    for (auto& n : minimal_names)
+        CHECK(conservative_names.count(n) == 1);
+    CHECK(conservative_names.size() >= minimal_names.size());
+}
+
+TEST_CASE("Policy - every observed syscall is always kept regardless of strictness", "[policy]") {
+    auto r = make_report();
+    auto prof = generate(r);
+
+    for (auto strict : {Strictness::Minimal, Strictness::Conservative, Strictness::Audit}) {
+        auto j = nlohmann::json::parse(to_oci_seccomp(prof, r, strict, true));
+        std::set<std::string> names;
+        if (!j["syscalls"].empty())
+            for (auto& n : j["syscalls"][0]["names"]) names.insert(n.get<std::string>());
+        for (auto& observed : prof.syscalls_observed)
+            CHECK(names.count(observed) == 1);
+    }
+}
+
+TEST_CASE("Policy - audit strictness logs instead of blocking", "[policy]") {
+    auto r = make_report();
+    auto prof = generate(r);
+    auto j = nlohmann::json::parse(to_oci_seccomp(prof, r, Strictness::Audit, true));
+    CHECK(j["defaultAction"] == "SCMP_ACT_LOG");
+
+    auto j_conservative = nlohmann::json::parse(to_oci_seccomp(prof, r, Strictness::Conservative, true));
+    CHECK(j_conservative["defaultAction"] == "SCMP_ACT_ERRNO");
+}
+
+TEST_CASE("Policy - base=none restricts to observed syscalls plus vital set only", "[policy]") {
+    auto r = make_report();
+    auto prof = generate(r);
+
+    auto with_base    = nlohmann::json::parse(to_oci_seccomp(prof, r, Strictness::Conservative, true));
+    auto without_base = nlohmann::json::parse(to_oci_seccomp(prof, r, Strictness::Conservative, false));
+
+    size_t with_count    = with_base["syscalls"].empty()    ? 0 : with_base["syscalls"][0]["names"].size();
+    size_t without_count = without_base["syscalls"].empty() ? 0 : without_base["syscalls"][0]["names"].size();
+    CHECK(with_count >= without_count);
+}
+
+TEST_CASE("Policy - explain mentions every observed syscall", "[policy]") {
+    auto r = make_report();
+    auto prof = generate(r);
+    std::string text = explain(prof, r, Strictness::Conservative, true);
+    for (auto& observed : prof.syscalls_observed)
+        CHECK(text.find(observed) != std::string::npos);
 }

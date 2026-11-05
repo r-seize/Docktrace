@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(docktrace VERSION 0.1.0 LANGUAGES C CXX)
+project(docktrace VERSION 0.1.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -106,7 +106,16 @@ set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Observe containers and generate minimal s
 set(CPACK_PACKAGE_DESCRIPTION
     "Docktrace watches a running container via /proc or eBPF and turns the observed behavior into a minimal Seccomp/capabilities profile.")
 set(CPACK_DEBIAN_PACKAGE_SECTION      "utils")
-set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
+# Map the host architecture to Debian's naming instead of hardcoding amd64,
+# so the same CMakeLists produces a correctly-labeled package on arm64 CI
+# runners too.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
+    set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+    set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
+else()
+    set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "${CMAKE_SYSTEM_PROCESSOR}")
+endif()
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS    ON)   # auto-detect runtime .so deps
 set(CPACK_GENERATOR                   "DEB")
 include(CPack)

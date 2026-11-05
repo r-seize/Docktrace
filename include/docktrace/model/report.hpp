@@ -38,11 +38,23 @@ struct NetworkObservation {
     uint64_t    count{0};
 };
 
+struct CollectionCoverage {
+    uint64_t processes{0};
+    uint64_t files{0};
+    uint64_t network_connections{0};
+    uint64_t syscalls{0};
+    uint64_t dropped_events{0};
+};
+
 struct ObservationMeta {
     std::string started_at;
     uint64_t    duration_seconds{0};
     std::string kernel;
     std::string architecture;
+    // "ebpf" or "proc" — which collector actually produced this report.
+    std::string mode{"proc"};
+    bool        btf_available{false};
+    CollectionCoverage coverage;
 };
 
 struct CapabilityObservation {

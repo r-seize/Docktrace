@@ -25,7 +25,7 @@ fi
 
 INSTALL_DIR="$ROOT/.vcpkg/installed"
 
-echo "=== docktrace bootstrap v0.1.0 ==="
+echo "=== docktrace bootstrap v0.1.1 ==="
 echo "Build:  $BUILD_TYPE"
 echo "eBPF:   $ENABLE_EBPF"
 echo "vcpkg:  $VCPKG"

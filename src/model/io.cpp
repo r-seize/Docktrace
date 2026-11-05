@@ -54,6 +54,16 @@ Report load_report(const std::string& path) {
         r.observation.duration_seconds = jo.value("duration_seconds", 0ULL);
         r.observation.kernel           = jo.value("kernel", "");
         r.observation.architecture     = jo.value("architecture", "");
+        r.observation.mode             = jo.value("mode", "proc");
+        r.observation.btf_available    = jo.value("btf_available", false);
+        if (jo.contains("coverage")) {
+            auto& jcov = jo["coverage"];
+            r.observation.coverage.processes            = jcov.value("processes", 0ULL);
+            r.observation.coverage.files                 = jcov.value("files", 0ULL);
+            r.observation.coverage.network_connections   = jcov.value("network_connections", 0ULL);
+            r.observation.coverage.syscalls              = jcov.value("syscalls", 0ULL);
+            r.observation.coverage.dropped_events         = jcov.value("dropped_events", 0ULL);
+        }
     }
     if (j.contains("processes")) {
         for (auto& p : j["processes"]) {
@@ -119,6 +129,15 @@ void save_report(const Report& report, const std::string& path) {
         {"duration_seconds", report.observation.duration_seconds},
         {"kernel",           report.observation.kernel},
         {"architecture",     report.observation.architecture},
+        {"mode",             report.observation.mode},
+        {"btf_available",    report.observation.btf_available},
+        {"coverage", {
+            {"processes",           report.observation.coverage.processes},
+            {"files",               report.observation.coverage.files},
+            {"network_connections", report.observation.coverage.network_connections},
+            {"syscalls",            report.observation.coverage.syscalls},
+            {"dropped_events",      report.observation.coverage.dropped_events},
+        }},
     };
     j["processes"] = json::array();
     for (auto& p : report.processes)

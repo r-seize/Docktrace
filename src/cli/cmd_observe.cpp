@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iostream>
 #include <spdlog/spdlog.h>
+#include <sys/stat.h>
 
 #ifdef DOCKTRACE_EBPF_ENABLED
 #include "docktrace/collector/ebpf_collector.hpp"
@@ -45,7 +46,13 @@ namespace {
         return opts;
     }
 
-    void do_observe(const collector::CollectorOptions& opts, Aggregator& agg) {
+    bool btf_available() {
+        struct stat st{};
+        return stat("/sys/kernel/btf/vmlinux", &st) == 0;
+    }
+
+    // Returns the collector mode actually used: "ebpf" or "proc".
+    std::string do_observe(const collector::CollectorOptions& opts, Aggregator& agg) {
         auto ingest = [&](const Event& e) { agg.ingest(e); };
 
 #ifdef DOCKTRACE_EBPF_ENABLED
@@ -53,13 +60,14 @@ namespace {
             spdlog::debug("Using eBPF collector");
             collector::EbpfCollector ebpf;
             ebpf.start(opts, ingest);
-            return;
+            return "ebpf";
         }
         spdlog::warn("eBPF requires root. Falling back to /proc collector.");
 #endif
         spdlog::debug("Using /proc collector");
         collector::ProcCollector proc;
         proc.start(opts, ingest);
+        return "proc";
     }
 }
 
@@ -107,11 +115,13 @@ void register_observe(CLI::App& app) {
             std::cout << fmt::format("[docktrace] cgroup_id filter: {}\n", info.cgroup_id);
 
         Aggregator agg;
-        do_observe(opts, agg);
+        std::string mode = do_observe(opts, agg);
 
         ObservationMeta meta;
         meta.duration_seconds = parse_duration(*duration);
         meta.architecture     = "x86_64";
+        meta.mode             = mode;
+        meta.btf_available    = btf_available();
 
         // Read kernel version
         std::ifstream osrel("/proc/version");

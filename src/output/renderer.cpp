@@ -35,7 +35,12 @@ namespace {
         out << fmt::format("Container: {}\n", r.container.name.empty() ? "unknown" : r.container.name);
         out << fmt::format("Runtime:   {}\n", r.container.runtime.empty() ? "unknown" : r.container.runtime);
         out << fmt::format("Root PID:  {}\n", r.container.root_pid);
-        out << fmt::format("Duration:  {}s\n\n", r.observation.duration_seconds);
+        out << fmt::format("Duration:  {}s\n", r.observation.duration_seconds);
+        out << fmt::format("Collector: {}{}\n", r.observation.mode,
+            r.observation.mode == "proc" ? " (reduced visibility)" : "");
+        out << fmt::format("Coverage:  {} processes, {} files, {} network, {} syscalls\n\n",
+            r.observation.coverage.processes, r.observation.coverage.files,
+            r.observation.coverage.network_connections, r.observation.coverage.syscalls);
 
         out << "Processes:\n";
         for (auto& p : r.processes)
@@ -104,6 +109,15 @@ namespace {
             {"duration_seconds", r.observation.duration_seconds},
             {"kernel",           r.observation.kernel},
             {"architecture",     r.observation.architecture},
+            {"mode",             r.observation.mode},
+            {"btf_available",    r.observation.btf_available},
+            {"coverage", {
+                {"processes",           r.observation.coverage.processes},
+                {"files",               r.observation.coverage.files},
+                {"network_connections", r.observation.coverage.network_connections},
+                {"syscalls",            r.observation.coverage.syscalls},
+                {"dropped_events",      r.observation.coverage.dropped_events},
+            }},
         };
 
         j["processes"] = json::array();
@@ -145,7 +159,11 @@ namespace {
         out << fmt::format("| Field | Value |\n|---|---|\n");
         out << fmt::format("| Runtime | {} |\n", r.container.runtime);
         out << fmt::format("| Root PID | {} |\n", r.container.root_pid);
-        out << fmt::format("| Duration | {}s |\n\n", r.observation.duration_seconds);
+        out << fmt::format("| Duration | {}s |\n", r.observation.duration_seconds);
+        out << fmt::format("| Collector | {} |\n", r.observation.mode);
+        out << fmt::format("| Coverage | {} processes, {} files, {} network, {} syscalls |\n\n",
+            r.observation.coverage.processes, r.observation.coverage.files,
+            r.observation.coverage.network_connections, r.observation.coverage.syscalls);
 
         out << "## Processes\n\n";
         for (auto& p : r.processes)

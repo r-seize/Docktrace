@@ -1,7 +1,7 @@
 # Docktrace
 
 ![License](https://img.shields.io/badge/license-BSD%203--Clause-blue)
-![Version](https://img.shields.io/badge/version-0.1.0-informational)
+![Version](https://img.shields.io/badge/version-0.1.1-informational)
 ![C++](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus)
 ![Platform](https://img.shields.io/badge/platform-Linux-FCC624?logo=linux&logoColor=black)
 ![CMake](https://img.shields.io/badge/build-CMake-064F8C?logo=cmake)
@@ -19,7 +19,7 @@ Docktrace watches a container for a period of time (which processes run, which f
 Download the `.deb` from the [releases page](https://github.com/r-seize/docktrace/releases) and install it:
 
 ```bash
-sudo dpkg -i docktrace-0.1.0-Linux.deb
+sudo dpkg -i docktrace-0.1.1-Linux.deb
 docktrace --version
 ```
 
@@ -47,7 +47,7 @@ Or generate a `.deb` yourself:
 
 ```bash
 cd build && cpack
-sudo dpkg -i docktrace-0.1.0-Linux.deb
+sudo dpkg -i docktrace-0.1.1-Linux.deb
 ```
 
 > **Without sudo:** `cmake --install build --prefix ~/.local` works if `~/.local/bin` is in your `PATH`.

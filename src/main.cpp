@@ -20,7 +20,7 @@ int main(int argc, char** argv) {
         "docktrace — Observe a container. Understand its behavior. "
         "Generate a safer runtime profile."
     };
-    app.set_version_flag("--version", "0.1.0");
+    app.set_version_flag("--version", "0.1.1");
 
     // Pre-scan argv so -v takes effect before subcommand callbacks run inside parse()
     for (int i = 1; i < argc; ++i) {

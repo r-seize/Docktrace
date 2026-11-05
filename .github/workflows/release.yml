@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  package:
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ \
+            libcli11-dev nlohmann-json3-dev \
+            libfmt-dev libspdlog-dev libyaml-cpp-dev
+
+      - name: Configure and build
+        run: |
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DDOCKTRACE_ENABLE_TESTS=OFF
+          cmake --build build --parallel "$(nproc)"
+
+      - name: Package .deb
+        run: |
+          cd build
+          cpack
+
+      - name: Checksums
+        run: |
+          cd build
+          sha256sum docktrace-*-Linux.deb > docktrace-${{ matrix.arch }}.sha256
+
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom-${{ matrix.arch }}.cdx.json
+
+      # NOTE: artifacts are not signed in this workflow (no Sigstore/cosign
+      # identity configured for this project yet). See CHANGELOG.md and
+      # THREAT-MODEL.md — signing is a tracked follow-up, not silently
+      # skipped.
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: docktrace-${{ matrix.arch }}
+          path: |
+            build/docktrace-*-Linux.deb
+            build/docktrace-${{ matrix.arch }}.sha256
+            sbom-${{ matrix.arch }}.cdx.json
+
+  release:
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true

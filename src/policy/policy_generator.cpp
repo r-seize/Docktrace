@@ -14,12 +14,89 @@ namespace {
         "init_module", "delete_module", "setns", "unshare",
     };
 
+    // Syscalls required for a process to start, allocate memory, handle
+    // signals, and exit cleanly — regardless of what the observation window
+    // happened to exercise. Dropping any of these tends to produce profiles
+    // that look minimal but break on the very first run under enforcement.
+    const std::set<std::string> VITAL_SYSCALLS = {
+        "exit", "exit_group", "rt_sigreturn", "rt_sigaction", "rt_sigprocmask",
+        "sigaltstack", "futex", "arch_prctl", "brk", "mmap", "munmap", "mprotect",
+        "access", "openat", "open", "close", "read", "write", "fstat", "stat",
+        "lseek", "prlimit64", "getrandom", "set_tid_address", "set_robust_list",
+        "clone", "clone3", "execve", "wait4", "getpid", "gettid", "getuid",
+        "geteuid", "getgid", "getegid", "rseq", "pread64", "pwrite64",
+        "readlink", "readlinkat", "poll", "epoll_create1", "epoll_ctl",
+        "epoll_wait", "epoll_pwait", "pipe2", "dup", "dup2", "dup3",
+    };
+
+    // A curated, representative subset of syscalls generally considered
+    // safe for containerized userspace workloads (loosely modeled on
+    // Docker's default seccomp profile, but intentionally not a byte-for-
+    // byte copy of it — treat this as docktrace's own conservative
+    // baseline, not as a certified equivalent of any specific runtime's
+    // default profile).
+    const std::set<std::string> DOCKER_DEFAULT_BASELINE = []{
+        std::set<std::string> s = VITAL_SYSCALLS;
+        for (auto name : {
+            "accept", "accept4", "bind", "connect", "listen", "socket",
+            "socketpair", "getsockname", "getpeername", "getsockopt",
+            "setsockopt", "shutdown", "sendto", "recvfrom", "sendmsg",
+            "recvmsg", "send", "recv",
+            "chdir", "fchdir", "getcwd", "mkdir", "mkdirat", "rmdir",
+            "unlink", "unlinkat", "rename", "renameat", "renameat2",
+            "link", "linkat", "symlink", "symlinkat", "chmod", "fchmod",
+            "fchmodat", "chown", "fchown", "fchownat", "lchown", "umask",
+            "truncate", "ftruncate", "fallocate", "fsync", "fdatasync",
+            "statfs", "fstatfs", "statx", "newfstatat", "getdents64",
+            "ioctl", "fcntl", "flock",
+            "sched_yield", "sched_getaffinity", "sched_setaffinity",
+            "nanosleep", "clock_nanosleep", "clock_gettime", "clock_getres",
+            "gettimeofday", "time", "times", "sysinfo", "uname",
+            "getrlimit", "setrlimit", "getpriority", "setpriority",
+            "getgroups", "setgroups", "getresuid", "getresgid",
+            "capget", "capset", "prctl", "madvise", "mremap", "mlock",
+            "munlock", "membarrier", "eventfd2", "signalfd4", "pipe",
+            "vfork", "fork", "wait3", "waitid", "kill", "tgkill", "tkill",
+            "restart_syscall", "exit_group",
+        }) s.insert(name);
+        return s;
+    }();
+
     bool is_root_write(const FileObservation& f) {
         if (f.access != FileAccess::Write && f.access != FileAccess::Create) return false;
         // /tmp, /var/cache, /var/log are expected writable paths
         for (auto& prefix : {"/tmp", "/var/cache", "/var/log", "/run", "/dev"})
             if (f.path.rfind(prefix, 0) == 0) return false;
         return true;
+    }
+
+    // Computes the final allow-set for a given strictness/base combination.
+    std::set<std::string> compute_allowlist(const std::vector<std::string>& observed,
+                                             Strictness strictness,
+                                             bool use_docker_default_base)
+    {
+        std::set<std::string> observed_set(observed.begin(), observed.end());
+
+        if (strictness == Strictness::Minimal || !use_docker_default_base) {
+            // Smallest surface: only what was actually seen, plus the bare
+            // minimum needed to start/exit a process.
+            std::set<std::string> allow = observed_set;
+            allow.insert(VITAL_SYSCALLS.begin(), VITAL_SYSCALLS.end());
+            return allow;
+        }
+
+        // Conservative / Audit: "docker-default minus syscalls never
+        // observed", but never below the vital set — i.e. keep a syscall
+        // from the baseline if it was observed OR it's vital for startup.
+        std::set<std::string> allow;
+        for (auto& name : DOCKER_DEFAULT_BASELINE)
+            if (observed_set.count(name) || VITAL_SYSCALLS.count(name))
+                allow.insert(name);
+        // Still allow anything observed that isn't in the curated baseline
+        // (e.g. an uncommon syscall the workload genuinely needs) rather
+        // than silently dropping it.
+        allow.insert(observed_set.begin(), observed_set.end());
+        return allow;
     }
 }
 
@@ -28,6 +105,13 @@ ProfileFormat parse_profile_format(const std::string& s) {
     if (s == "oci-seccomp") return ProfileFormat::OciSeccomp;
     if (s == "docker-compose") return ProfileFormat::DockerCompose;
     throw std::invalid_argument("Unknown profile format: " + s);
+}
+
+Strictness parse_strictness(const std::string& s) {
+    if (s == "conservative") return Strictness::Conservative;
+    if (s == "minimal")      return Strictness::Minimal;
+    if (s == "audit")        return Strictness::Audit;
+    throw std::invalid_argument("Unknown strictness: " + s + " (expected conservative|minimal|audit)");
 }
 
 SecurityProfile generate(const Report& report) {
@@ -123,14 +207,18 @@ std::string to_yaml(const SecurityProfile& profile) {
     return ss.str();
 }
 
-std::string to_oci_seccomp(const SecurityProfile& profile, const Report& /*report*/) {
+std::string to_oci_seccomp(const SecurityProfile& profile, const Report& /*report*/,
+                            Strictness strictness, bool use_docker_default_base)
+{
     using json = nlohmann::json;
     json j;
-    j["defaultAction"]  = "SCMP_ACT_ERRNO";
+    j["defaultAction"]  = (strictness == Strictness::Audit) ? "SCMP_ACT_LOG" : "SCMP_ACT_ERRNO";
     j["architectures"]  = {"SCMP_ARCH_X86_64"};
 
+    auto allow_set = compute_allowlist(profile.syscalls_observed, strictness, use_docker_default_base);
+
     json allowed = json::array();
-    for (auto& s : profile.syscalls_observed)
+    for (auto& s : allow_set)
         allowed.push_back(s);
 
     j["syscalls"] = json::array();
@@ -140,8 +228,46 @@ std::string to_oci_seccomp(const SecurityProfile& profile, const Report& /*repor
             {"action", "SCMP_ACT_ALLOW"},
         });
     }
-    j["_comment"] = "EXPERIMENTAL - generated by docktrace. Validate before use.";
+
+    const char* strictness_name =
+        strictness == Strictness::Minimal ? "minimal" :
+        strictness == Strictness::Audit   ? "audit"   : "conservative";
+    j["_comment"] = fmt::format(
+        "Generated by docktrace (strictness={}, base={}). EXPERIMENTAL — "
+        "validate and test thoroughly before enforcing in production.",
+        strictness_name, use_docker_default_base ? "docker-default" : "none");
     return j.dump(2);
+}
+
+std::string explain(const SecurityProfile& profile, const Report& report,
+                     Strictness strictness, bool use_docker_default_base)
+{
+    std::ostringstream ss;
+    auto allow_set = compute_allowlist(profile.syscalls_observed, strictness, use_docker_default_base);
+    std::set<std::string> observed_set(profile.syscalls_observed.begin(), profile.syscalls_observed.end());
+
+    ss << "Capabilities:\n";
+    for (auto& c : profile.caps_add)
+        ss << fmt::format("  + {:<24} observed in use during this run\n", c);
+    for (auto& c : report.capabilities.not_evidenced)
+        ss << fmt::format("  - {:<24} configured but never exercised — dropped\n", c);
+
+    ss << "\nSyscalls kept (" << allow_set.size() << "):\n";
+    for (auto& name : allow_set) {
+        std::string reason;
+        if (observed_set.count(name))                reason = "observed during this run";
+        else if (VITAL_SYSCALLS.count(name))          reason = "vital for clean process startup/exit";
+        else                                          reason = "part of docktrace's curated baseline";
+        if (SENSITIVE_SYSCALLS.count(name))
+            reason += " (sensitive — review before trusting this profile)";
+        ss << fmt::format("  {:<20} {}\n", name, reason);
+    }
+
+    if (strictness == Strictness::Audit)
+        ss << "\ndefaultAction is SCMP_ACT_LOG: nothing is blocked, deviations from the "
+              "allow-set are logged for review before switching to enforcement.\n";
+
+    return ss.str();
 }
 
 } // namespace docktrace::policy

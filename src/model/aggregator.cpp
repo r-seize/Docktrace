@@ -115,6 +115,23 @@ Report Aggregator::build(const ContainerInfo& container, const ObservationMeta& 
 
     r.network = network_;
 
+    r.observation.coverage.processes           = processes_.size();
+    r.observation.coverage.files                = files_.size();
+    r.observation.coverage.network_connections  = network_.size();
+    r.observation.coverage.syscalls             = syscalls_.size();
+
+    if (r.observation.mode == "proc")
+        r.warnings.emplace_back(
+            "Collected via /proc fallback: short-lived processes and some syscalls may have been missed. "
+            "Install a BTF-enabled kernel and libbpf to enable the eBPF collector for full visibility.");
+    if (r.observation.duration_seconds > 0 && r.observation.duration_seconds < 10)
+        r.warnings.emplace_back(
+            "Observation window was shorter than 10 seconds; infrequent code paths were likely not exercised.");
+    if (processes_.empty() && files_.empty() && network_.empty())
+        r.warnings.emplace_back(
+            "No activity was observed at all. Exercise the container's real workload during observation, "
+            "otherwise any generated profile will be overly restrictive.");
+
     r.capabilities.configured   = container.capabilities_configured;
     r.capabilities.observed     = cap_observed_;
     for (auto& cap : container.capabilities_configured) {

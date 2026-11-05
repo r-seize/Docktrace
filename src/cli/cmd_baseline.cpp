@@ -11,7 +11,9 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <set>
+#include <sstream>
 #include <stdexcept>
+#include <sys/stat.h>
 
 #ifdef DOCKTRACE_EBPF_ENABLED
 #include "docktrace/collector/ebpf_collector.hpp"
@@ -63,10 +65,12 @@ namespace {
             col.start(opts, [&](const Event& e){ agg.ingest(e); });
         };
 
+        std::string mode = "proc";
 #ifdef DOCKTRACE_EBPF_ENABLED
         if (collector::EbpfCollector::is_available()) {
             collector::EbpfCollector ebpf;
             do_collect(ebpf);
+            mode = "ebpf";
         } else {
 #endif
             collector::ProcCollector proc;
@@ -78,6 +82,9 @@ namespace {
         ObservationMeta meta;
         meta.duration_seconds = secs;
         meta.architecture     = "x86_64";
+        meta.mode             = mode;
+        struct stat st{};
+        meta.btf_available    = stat("/sys/kernel/btf/vmlinux", &st) == 0;
         return agg.build(info, meta);
     }
 
@@ -102,20 +109,44 @@ namespace {
         return f;
     }
 
+    // Prints additions/removals; only counts as a failure if `enforce` is true
+    // (driven by --fail-on, so users can scope what CI actually blocks on).
     bool diff_sets(const std::set<std::string>& base,
                    const std::set<std::string>& curr,
-                   const std::string& label)
+                   const std::string& label,
+                   bool enforce)
     {
         bool failed = false;
         for (auto& item : curr)
             if (!base.count(item)) {
                 std::cout << fmt::format("  + {} {}\n", label, item);
-                failed = true;
+                if (enforce) failed = true;
             }
         for (auto& item : base)
             if (!curr.count(item))
                 std::cout << fmt::format("  - {} {}\n", label, item);
         return failed;
+    }
+
+    const std::set<std::string> FAIL_ON_CATEGORIES = {
+        "new-process", "new-network", "new-file-write", "new-syscall",
+    };
+
+    // Throws on an unrecognized category instead of silently ignoring it —
+    // a typo here must not quietly disable a CI gate.
+    std::set<std::string> parse_fail_on(const std::string& s) {
+        std::set<std::string> out;
+        std::istringstream ss(s);
+        std::string tok;
+        while (std::getline(ss, tok, ',')) {
+            if (tok.empty()) continue;
+            if (!FAIL_ON_CATEGORIES.count(tok))
+                throw std::runtime_error(fmt::format(
+                    "Unknown --fail-on category: '{}' (expected one or more of: "
+                    "new-process,new-network,new-file-write,new-syscall)", tok));
+            out.insert(tok);
+        }
+        return out;
     }
 }
 
@@ -153,14 +184,20 @@ void register_baseline(CLI::App& app) {
         auto duration   = std::make_shared<std::string>("60s");
         auto baseline   = std::make_shared<std::string>("baseline.json");
         auto output     = std::make_shared<std::string>();
+        auto fail_on    = std::make_shared<std::string>("new-process,new-network,new-file-write,new-syscall");
 
         check->add_option("-c,--container", *container, "Container name or ID");
         check->add_option("-p,--pid",       *pid_opt,   "Root PID");
         check->add_option("-d,--duration",  *duration,  "Observation duration");
         check->add_option("-b,--baseline",  *baseline,  "Baseline JSON file")->required();
         check->add_option("-o,--output",    *output,    "Save current report to file");
+        check->add_option("--fail-on",      *fail_on,
+            "Comma-separated deviation categories that cause a non-zero exit: "
+            "new-process,new-network,new-file-write,new-syscall (default: all)");
 
         check->callback([=]() {
+            auto gate = parse_fail_on(*fail_on); // fail fast on a typo, before observing
+
             Report base_report = model::load_report(*baseline);
             Report curr_report = run_observation(*container, *pid_opt, *duration);
 
@@ -171,12 +208,16 @@ void register_baseline(CLI::App& app) {
 
             bool failed = false;
             std::cout << "\n=== Baseline comparison ===\n\n";
-            failed |= diff_sets(base_fp.processes,   curr_fp.processes,   "process:");
-            failed |= diff_sets(base_fp.network,     curr_fp.network,     "network:");
-            failed |= diff_sets(base_fp.file_writes, curr_fp.file_writes, "file write:");
-            failed |= diff_sets(base_fp.syscalls,    curr_fp.syscalls,    "syscall:");
+            failed |= diff_sets(base_fp.processes,   curr_fp.processes,   "process:",
+                                 gate.count("new-process"));
+            failed |= diff_sets(base_fp.network,     curr_fp.network,     "network:",
+                                 gate.count("new-network"));
+            failed |= diff_sets(base_fp.file_writes, curr_fp.file_writes, "file write:",
+                                 gate.count("new-file-write"));
+            failed |= diff_sets(base_fp.syscalls,    curr_fp.syscalls,    "syscall:",
+                                 gate.count("new-syscall"));
 
-            if (!failed) std::cout << "  (no unexpected changes)\n";
+            if (!failed) std::cout << "  (no unexpected changes in gated categories)\n";
             std::cout << "\nStatus: " << (failed ? "FAILED" : "OK") << "\n";
             if (failed) std::exit(1);
         });
